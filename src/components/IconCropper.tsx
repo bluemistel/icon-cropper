@@ -1,0 +1,430 @@
+"use client";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+type LoadedImage = {
+  element: HTMLImageElement;
+  width: number;
+  height: number;
+};
+
+type PointerState = {
+  isDragging: boolean;
+  lastX: number;
+  lastY: number;
+};
+
+const CANVAS_SIZE = 512; // 出力の基準解像度
+
+const SIZE_PRESETS = [
+  { label: "96x96", value: 96 },
+  { label: "128x128", value: 128 },
+  { label: "256x256", value: 256 },
+  { label: "512x512", value: 512 },
+  { label: "1024x1024", value: 1024 },
+];
+
+export default function IconCropper() {
+  const dropRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [loadedImage, setLoadedImage] = useState<LoadedImage | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+  // 画像の表示位置とズーム（scale）はキャンバス座標系で管理
+  const [offsetX, setOffsetX] = useState<number>(0);
+  const [offsetY, setOffsetY] = useState<number>(0);
+  const [scale, setScale] = useState<number>(1);
+
+  // 背景色と透過
+  const [bgColor, setBgColor] = useState<string>("#ffffff");
+  const [transparent, setTransparent] = useState<boolean>(false);
+
+  const [fileName, setFileName] = useState<string>("icon.png");
+  const [exportSize, setExportSize] = useState<number>(128);
+  const [customSize, setCustomSize] = useState<string>("128x128");
+
+  const pointer = useRef<PointerState>({ isDragging: false, lastX: 0, lastY: 0 });
+
+  const revokeUrl = useCallback(() => {
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
+  }, [imageUrl]);
+
+  useEffect(() => () => revokeUrl(), [revokeUrl]);
+
+  const handleFiles = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const url = URL.createObjectURL(file);
+    revokeUrl();
+    setImageUrl(url);
+
+    const img = new Image();
+    img.onload = () => {
+      setLoadedImage({ element: img, width: img.naturalWidth, height: img.naturalHeight });
+      // 初期表示：画像をキャンバスに収めるようにスケールとオフセットを調整
+      const minSide = Math.min(img.naturalWidth, img.naturalHeight);
+      const initialScale = CANVAS_SIZE / minSide;
+      setScale(initialScale);
+      setOffsetX((CANVAS_SIZE - img.naturalWidth * initialScale) / 2);
+      setOffsetY((CANVAS_SIZE - img.naturalHeight * initialScale) / 2);
+      setFileName((file.name?.replace(/\.[^.]+$/, "") || "icon") + ".png");
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  }, [revokeUrl]);
+
+  // サイズ選択ハンドラー
+  const handleSizePresetChange = useCallback((value: string) => {
+    const preset = SIZE_PRESETS.find(p => p.value.toString() === value);
+    if (preset) {
+      setExportSize(preset.value);
+      setCustomSize(preset.label);
+    }
+  }, []);
+
+  const handleCustomSizeChange = useCallback((value: string) => {
+    setCustomSize(value);
+    // "128x128" のような形式からサイズを抽出
+    const match = value.match(/^(\d+)x\d+$/);
+    if (match) {
+      const size = parseInt(match[1], 10);
+      if (size >= 64 && size <= 2048) {
+        setExportSize(size);
+      }
+    }
+  }, []);
+
+  // DnD
+  useEffect(() => {
+    const drop = dropRef.current;
+    if (!drop) return;
+    const prevent = (e: DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onDrop = (e: DragEvent) => {
+      prevent(e);
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      handleFiles(dt.files);
+    };
+    drop.addEventListener("dragenter", prevent);
+    drop.addEventListener("dragover", prevent);
+    drop.addEventListener("drop", onDrop);
+    return () => {
+      drop.removeEventListener("dragenter", prevent);
+      drop.removeEventListener("dragover", prevent);
+      drop.removeEventListener("drop", onDrop);
+    };
+  }, [handleFiles]);
+
+  // キャンバス描画
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    // クリア
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 背景
+    if (!transparent) {
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    } else {
+      // チェッカーパターンで透過を視覚化
+      const gridSize = 16;
+      for (let y = 0; y < canvas.height; y += gridSize) {
+        for (let x = 0; x < canvas.width; x += gridSize) {
+          const even = ((x / gridSize) + (y / gridSize)) % 2 === 0;
+          ctx.fillStyle = even ? "#ddd" : "#fff";
+          ctx.fillRect(x, y, gridSize, gridSize);
+        }
+      }
+    }
+
+    // マスク：円形
+    const radius = canvas.width / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(canvas.width / 2, canvas.height / 2, radius, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+
+    // 画像描画
+    if (loadedImage) {
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(
+        loadedImage.element,
+        offsetX,
+        offsetY,
+        loadedImage.width * scale,
+        loadedImage.height * scale
+      );
+    }
+
+    ctx.restore();
+
+    // 枠線
+    ctx.beginPath();
+    ctx.arc(canvas.width / 2, canvas.height / 2, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(0,0,0,0.2)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }, [bgColor, transparent, loadedImage, offsetX, offsetY, scale]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    canvas.width = CANVAS_SIZE;
+    canvas.height = CANVAS_SIZE;
+    draw();
+  }, [draw]);
+
+  // ドラッグ移動
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    pointer.current = { isDragging: true, lastX: e.clientX, lastY: e.clientY };
+    (e.target as HTMLCanvasElement).setPointerCapture(e.pointerId);
+  }, []);
+
+  const onPointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!pointer.current.isDragging) return;
+    const dx = e.clientX - pointer.current.lastX;
+    const dy = e.clientY - pointer.current.lastY;
+    pointer.current.lastX = e.clientX;
+    pointer.current.lastY = e.clientY;
+    setOffsetX((x) => x + dx);
+    setOffsetY((y) => y + dy);
+  }, []);
+
+  const onPointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
+    pointer.current.isDragging = false;
+    (e.target as HTMLCanvasElement).releasePointerCapture(e.pointerId);
+  }, []);
+
+  // ホイールでズーム（中心はキャンバス中心）
+  const onWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const zoomFactor = Math.exp(-e.deltaY * 0.001);
+    setScale((s) => Math.max(0.1, Math.min(10, s * zoomFactor)));
+  }, []);
+
+  // 依存が変わるたびに再描画
+  useEffect(() => {
+    draw();
+  }, [draw, offsetX, offsetY, scale, bgColor, transparent, loadedImage]);
+
+  const handleDownload = useCallback(() => {
+    const srcCanvas = canvasRef.current;
+    if (!srcCanvas) return;
+
+    // 任意サイズで書き出し
+    const outCanvas = document.createElement("canvas");
+    outCanvas.width = exportSize;
+    outCanvas.height = exportSize;
+    const outCtx = outCanvas.getContext("2d");
+    if (!outCtx) return;
+
+    // 背景
+    if (!transparent) {
+      outCtx.fillStyle = bgColor;
+      outCtx.fillRect(0, 0, exportSize, exportSize);
+    }
+
+    // 円形マスク
+    const r = exportSize / 2;
+    outCtx.save();
+    outCtx.beginPath();
+    outCtx.arc(r, r, r, 0, Math.PI * 2);
+    outCtx.closePath();
+    outCtx.clip();
+
+    if (loadedImage) {
+      // スケールとオフセットを出力解像度に合わせて換算
+      const scaleRatio = exportSize / CANVAS_SIZE;
+      outCtx.imageSmoothingQuality = "high";
+      outCtx.drawImage(
+        loadedImage.element,
+        offsetX * scaleRatio,
+        offsetY * scaleRatio,
+        loadedImage.width * scale * scaleRatio,
+        loadedImage.height * scale * scaleRatio
+      );
+    }
+    outCtx.restore();
+
+    const link = document.createElement("a");
+    link.download = fileName || "icon.png";
+    link.href = outCanvas.toDataURL("image/png");
+    link.click();
+  }, [bgColor, transparent, loadedImage, offsetX, offsetY, scale, fileName, exportSize]);
+
+  if (!loadedImage) {
+    // 画像がアップロードされていない場合はアップロードUIのみ表示
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div 
+          ref={dropRef}
+          className="bg-white/90 border-2 border-dashed border-accent-bg rounded-2xl p-12 text-center max-w-md mx-auto shadow-lg hover:shadow-xl transition-shadow duration-300"
+        >
+          <div className="flex flex-col items-center gap-6">
+            <div className="w-20 h-20 bg-accent-bg rounded-full flex items-center justify-center">
+              <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-header-bg mb-2">画像をアップロード</h2>
+              <p className="text-sm text-gray-600 mb-4">
+                ドラッグ＆ドロップするか、ファイルを選択してください
+              </p>
+              <label className="inline-block bg-accent-bg text-white px-6 py-3 rounded-lg font-medium cursor-pointer hover:bg-opacity-90 transition-colors">
+                ファイルを選択
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleFiles(e.target.files)}
+                  className="hidden"
+                />
+              </label>
+            </div>
+            <div className="text-xs text-gray-500">
+              対応フォーマット: JPG, PNG, GIF, WebP
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* キャンバスエディター */}
+      <div className="bg-white/90 rounded-2xl p-6 shadow-lg">
+        <h2 className="text-lg font-bold text-header-bg mb-4">編集</h2>
+        <div className="flex justify-center mb-4">
+          <div className="relative">
+            <canvas
+              ref={canvasRef}
+              className="w-[min(100%,400px)] h-[min(100%,400px)] touch-none rounded-xl border-2 border-gray-200 bg-white shadow-inner"
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onWheel={onWheel}
+            />
+          </div>
+        </div>
+        <div className="text-center text-sm text-gray-600">
+          ドラッグで位置移動、ホイールでズーム
+        </div>
+      </div>
+
+      {/* 設定パネル */}
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* 背景設定 */}
+        <div className="bg-white/90 rounded-2xl p-6 shadow-lg">
+          <h3 className="text-lg font-bold text-header-bg mb-4">背景設定</h3>
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                value={bgColor}
+                onChange={(e) => setBgColor(e.target.value)}
+                className="w-12 h-12 rounded-lg border-2 border-gray-200 cursor-pointer"
+                disabled={transparent}
+              />
+              <input
+                type="text"
+                value={bgColor}
+                onChange={(e) => setBgColor(e.target.value)}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-bg"
+                placeholder="#ffffff"
+                disabled={transparent}
+              />
+            </div>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={transparent} 
+                onChange={(e) => setTransparent(e.target.checked)}
+                className="w-5 h-5 text-accent-bg rounded focus:ring-accent-bg"
+              />
+              <span className="text-gray-700">透明背景を使用</span>
+            </label>
+          </div>
+        </div>
+
+        {/* サイズ設定 */}
+        <div className="bg-white/90 rounded-2xl p-6 shadow-lg">
+          <h3 className="text-lg font-bold text-header-bg mb-4">サイズ設定</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">プリセット</label>
+              <select
+                value={exportSize}
+                onChange={(e) => handleSizePresetChange(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-bg"
+              >
+                {SIZE_PRESETS.map(preset => (
+                  <option key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">サイズ</label>
+              <input
+                type="text"
+                value={customSize}
+                onChange={(e) => handleCustomSizeChange(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-bg"
+                placeholder="128x128"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ダウンロードパネル */}
+      <div className="bg-white/90 rounded-2xl p-6 shadow-lg">
+        <h3 className="text-lg font-bold text-header-bg mb-4">ダウンロード</h3>
+        <div className="flex flex-col sm:flex-row gap-4 items-end">
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-gray-700 mb-2">ファイル名</label>
+            <input
+              type="text"
+              value={fileName}
+              onChange={(e) => setFileName(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-bg"
+              placeholder="icon.png"
+            />
+          </div>
+          <button
+            onClick={handleDownload}
+            className="bg-accent-bg text-white px-8 py-3 rounded-lg font-medium hover:bg-opacity-90 transition-colors shadow-lg hover:shadow-xl"
+          >
+            PNGをダウンロード
+          </button>
+        </div>
+      </div>
+
+      {/* 新しい画像をアップロード */}
+      <div className="text-center">
+        <label className="inline-block bg-gray-500 text-white px-6 py-3 rounded-lg font-medium cursor-pointer hover:bg-gray-600 transition-colors">
+          新しい画像をアップロード
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => handleFiles(e.target.files)}
+            className="hidden"
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+
