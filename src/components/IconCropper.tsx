@@ -13,6 +13,14 @@ type PointerState = {
   lastY: number;
 };
 
+type TouchState = {
+  isPinching: boolean;
+  initialDistance: number;
+  initialScale: number;
+  centerX: number;
+  centerY: number;
+};
+
 const CANVAS_SIZE = 512; // 出力の基準解像度
 
 const SIZE_PRESETS = [
@@ -43,6 +51,13 @@ export default function IconCropper() {
   const [customSize, setCustomSize] = useState<string>("128x128");
 
   const pointer = useRef<PointerState>({ isDragging: false, lastX: 0, lastY: 0 });
+  const touch = useRef<TouchState>({ 
+    isPinching: false, 
+    initialDistance: 0, 
+    initialScale: 1, 
+    centerX: 0, 
+    centerY: 0 
+  });
 
   const revokeUrl = useCallback(() => {
     if (imageUrl) URL.revokeObjectURL(imageUrl);
@@ -204,11 +219,112 @@ export default function IconCropper() {
     (e.target as HTMLCanvasElement).releasePointerCapture(e.pointerId);
   }, []);
 
-  // ホイールでズーム（中心はキャンバス中心）
+  // ホイールでズーム（滑らかなズーム）
   const onWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    const zoomFactor = Math.exp(-e.deltaY * 0.001);
-    setScale((s) => Math.max(0.1, Math.min(10, s * zoomFactor)));
+    
+    // より滑らかなズーム係数
+    const zoomFactor = Math.exp(-e.deltaY * 0.0005);
+    const newScale = Math.max(0.1, Math.min(10, scale * zoomFactor));
+    
+    // マウス位置を中心としたズーム
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    // キャンバス座標系に変換
+    const canvasX = (mouseX / rect.width) * CANVAS_SIZE;
+    const canvasY = (mouseY / rect.height) * CANVAS_SIZE;
+    
+    // ズーム中心を計算
+    const scaleRatio = newScale / scale;
+    const newOffsetX = canvasX - (canvasX - offsetX) * scaleRatio;
+    const newOffsetY = canvasY - (canvasY - offsetY) * scaleRatio;
+    
+    setScale(newScale);
+    setOffsetX(newOffsetX);
+    setOffsetY(newOffsetY);
+  }, [scale, offsetX, offsetY]);
+
+  // タッチジェスチャー対応
+  const getTouchDistance = useCallback((touches: React.TouchList) => {
+    if (touches.length < 2) return 0;
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }, []);
+
+  const getTouchCenter = useCallback((touches: React.TouchList) => {
+    if (touches.length < 2) return { x: 0, y: 0 };
+    const x = (touches[0].clientX + touches[1].clientX) / 2;
+    const y = (touches[0].clientY + touches[1].clientY) / 2;
+    return { x, y };
+  }, []);
+
+  const onTouchStart = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    
+    if (e.touches.length === 2) {
+      // ピンチ開始
+      const distance = getTouchDistance(e.touches);
+      const center = getTouchCenter(e.touches);
+      const rect = e.currentTarget.getBoundingClientRect();
+      
+      touch.current = {
+        isPinching: true,
+        initialDistance: distance,
+        initialScale: scale,
+        centerX: (center.x - rect.left) / rect.width * CANVAS_SIZE,
+        centerY: (center.y - rect.top) / rect.height * CANVAS_SIZE,
+      };
+    } else if (e.touches.length === 1) {
+      // ドラッグ開始
+      pointer.current = { 
+        isDragging: true, 
+        lastX: e.touches[0].clientX, 
+        lastY: e.touches[0].clientY 
+      };
+    }
+  }, [scale, getTouchDistance, getTouchCenter]);
+
+  const onTouchMove = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    
+    if (e.touches.length === 2 && touch.current.isPinching) {
+      // ピンチ中
+      const distance = getTouchDistance(e.touches);
+      const center = getTouchCenter(e.touches);
+      const rect = e.currentTarget.getBoundingClientRect();
+      
+      const scaleRatio = distance / touch.current.initialDistance;
+      const newScale = Math.max(0.1, Math.min(10, touch.current.initialScale * scaleRatio));
+      
+      // ピンチ中心を基準にズーム
+      const canvasX = (center.x - rect.left) / rect.width * CANVAS_SIZE;
+      const canvasY = (center.y - rect.top) / rect.height * CANVAS_SIZE;
+      
+      const scaleRatio2 = newScale / scale;
+      const newOffsetX = canvasX - (canvasX - offsetX) * scaleRatio2;
+      const newOffsetY = canvasY - (canvasY - offsetY) * scaleRatio2;
+      
+      setScale(newScale);
+      setOffsetX(newOffsetX);
+      setOffsetY(newOffsetY);
+    } else if (e.touches.length === 1 && pointer.current.isDragging) {
+      // ドラッグ中
+      const dx = e.touches[0].clientX - pointer.current.lastX;
+      const dy = e.touches[0].clientY - pointer.current.lastY;
+      pointer.current.lastX = e.touches[0].clientX;
+      pointer.current.lastY = e.touches[0].clientY;
+      setOffsetX((x) => x + dx);
+      setOffsetY((y) => y + dy);
+    }
+  }, [scale, offsetX, offsetY, getTouchDistance, getTouchCenter]);
+
+  const onTouchEnd = useCallback((e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    pointer.current.isDragging = false;
+    touch.current.isPinching = false;
   }, []);
 
   // 依存が変わるたびに再描画
@@ -313,11 +429,14 @@ export default function IconCropper() {
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
               onWheel={onWheel}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
             />
           </div>
         </div>
         <div className="text-center text-sm text-gray-600">
-          ドラッグで位置移動、ホイールでズーム
+          ドラッグで位置移動、ホイールでズーム、スマホではピンチでズーム
         </div>
       </div>
 
