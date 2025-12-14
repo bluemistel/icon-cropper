@@ -1,6 +1,8 @@
 # アイコン切り抜きツール (Next.js + Tailwind CSS)
 
 ブラウザで動作する円形アイコンの切り抜きツールです。画像アップロード（ドラッグ＆ドロップ可）、ドラッグ移動、ホイールズーム、背景色（または透過）設定、PNGダウンロードに対応しています。
+URL
+https://icon-clopper.vercel.app/
 
 ## 使用技術
 - Next.js (App Router, TypeScript)
