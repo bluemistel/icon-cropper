@@ -165,11 +165,15 @@ export default function IconCropper() {
       }
     }
 
-    // マスク：円形
-    const radius = canvas.width / 2;
+    // マスク：円形（縁取りがある場合は内側に収める）
+    const maxRadius = canvas.width / 2;
+    const clipRadius = borderEnabled && borderWidth > 0 
+      ? maxRadius - borderWidth 
+      : maxRadius;
+    
     ctx.save();
     ctx.beginPath();
-    ctx.arc(canvas.width / 2, canvas.height / 2, radius, 0, Math.PI * 2);
+    ctx.arc(canvas.width / 2, canvas.height / 2, clipRadius, 0, Math.PI * 2);
     ctx.closePath();
     ctx.clip();
 
@@ -187,17 +191,19 @@ export default function IconCropper() {
 
     ctx.restore();
 
-    // 縁取り描画
+    // 縁取り描画（内側に描画）
     if (borderEnabled && borderWidth > 0) {
       ctx.beginPath();
-      ctx.arc(canvas.width / 2, canvas.height / 2, radius, 0, Math.PI * 2);
+      // 縁取りの中心がクリッピング領域の端に来るように
+      const borderRadius = clipRadius - borderWidth / 2;
+      ctx.arc(canvas.width / 2, canvas.height / 2, borderRadius, 0, Math.PI * 2);
       ctx.strokeStyle = borderColor;
       ctx.lineWidth = borderWidth;
       ctx.stroke();
     } else {
-      // 縁取りなしの場合は薄い枠線のみ
+      // 縁取りなしの場合は薄い枠線のみ（視覚的なガイド）
       ctx.beginPath();
-      ctx.arc(canvas.width / 2, canvas.height / 2, radius, 0, Math.PI * 2);
+      ctx.arc(canvas.width / 2, canvas.height / 2, maxRadius - 1, 0, Math.PI * 2);
       ctx.strokeStyle = "rgba(0,0,0,0.2)";
       ctx.lineWidth = 2;
       ctx.stroke();
@@ -363,17 +369,22 @@ export default function IconCropper() {
       outCtx.fillRect(0, 0, exportSize, exportSize);
     }
 
-    // 円形マスク
-    const r = exportSize / 2;
+    // 円形マスク（縁取りがある場合は内側に収める）
+    const maxR = exportSize / 2;
+    const scaleRatio = exportSize / CANVAS_SIZE;
+    const outputBorderWidth = borderEnabled && borderWidth > 0 
+      ? (borderWidth * exportSize) / CANVAS_SIZE 
+      : 0;
+    const clipR = maxR - outputBorderWidth;
+    
     outCtx.save();
     outCtx.beginPath();
-    outCtx.arc(r, r, r, 0, Math.PI * 2);
+    outCtx.arc(maxR, maxR, clipR, 0, Math.PI * 2);
     outCtx.closePath();
     outCtx.clip();
 
     if (loadedImage) {
       // スケールとオフセットを出力解像度に合わせて換算
-      const scaleRatio = exportSize / CANVAS_SIZE;
       outCtx.imageSmoothingQuality = "high";
       outCtx.drawImage(
         loadedImage.element,
@@ -385,11 +396,12 @@ export default function IconCropper() {
     }
     outCtx.restore();
 
-    // 縁取り描画（出力時）
-    if (borderEnabled && borderWidth > 0) {
-      const outputBorderWidth = (borderWidth * exportSize) / CANVAS_SIZE;
+    // 縁取り描画（出力時、内側に描画）
+    if (borderEnabled && borderWidth > 0 && outputBorderWidth > 0) {
       outCtx.beginPath();
-      outCtx.arc(r, r, r, 0, Math.PI * 2);
+      // 縁取りの中心がクリッピング領域の端に来るように
+      const borderR = clipR - outputBorderWidth / 2;
+      outCtx.arc(maxR, maxR, borderR, 0, Math.PI * 2);
       outCtx.strokeStyle = borderColor;
       outCtx.lineWidth = outputBorderWidth;
       outCtx.stroke();
