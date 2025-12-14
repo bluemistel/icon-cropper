@@ -46,6 +46,11 @@ export default function IconCropper() {
   const [bgColor, setBgColor] = useState<string>("#ffffff");
   const [transparent, setTransparent] = useState<boolean>(false);
 
+  // 縁取り設定
+  const [borderEnabled, setBorderEnabled] = useState<boolean>(false);
+  const [borderWidth, setBorderWidth] = useState<number>(4);
+  const [borderColor, setBorderColor] = useState<string>("#333333");
+
   const [fileName, setFileName] = useState<string>("icon.png");
   const [exportSize, setExportSize] = useState<number>(128);
   const [customSize, setCustomSize] = useState<string>("128x128");
@@ -182,13 +187,22 @@ export default function IconCropper() {
 
     ctx.restore();
 
-    // 枠線
-    ctx.beginPath();
-    ctx.arc(canvas.width / 2, canvas.height / 2, radius, 0, Math.PI * 2);
-    ctx.strokeStyle = "rgba(0,0,0,0.2)";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-  }, [bgColor, transparent, loadedImage, offsetX, offsetY, scale]);
+    // 縁取り描画
+    if (borderEnabled && borderWidth > 0) {
+      ctx.beginPath();
+      ctx.arc(canvas.width / 2, canvas.height / 2, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = borderWidth;
+      ctx.stroke();
+    } else {
+      // 縁取りなしの場合は薄い枠線のみ
+      ctx.beginPath();
+      ctx.arc(canvas.width / 2, canvas.height / 2, radius, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0,0,0,0.2)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }, [bgColor, transparent, loadedImage, offsetX, offsetY, scale, borderEnabled, borderWidth, borderColor]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -371,11 +385,21 @@ export default function IconCropper() {
     }
     outCtx.restore();
 
+    // 縁取り描画（出力時）
+    if (borderEnabled && borderWidth > 0) {
+      const outputBorderWidth = (borderWidth * exportSize) / CANVAS_SIZE;
+      outCtx.beginPath();
+      outCtx.arc(r, r, r, 0, Math.PI * 2);
+      outCtx.strokeStyle = borderColor;
+      outCtx.lineWidth = outputBorderWidth;
+      outCtx.stroke();
+    }
+
     const link = document.createElement("a");
     link.download = fileName || "icon.png";
     link.href = outCanvas.toDataURL("image/png");
     link.click();
-  }, [bgColor, transparent, loadedImage, offsetX, offsetY, scale, fileName, exportSize]);
+  }, [bgColor, transparent, loadedImage, offsetX, offsetY, scale, fileName, exportSize, borderEnabled, borderWidth, borderColor]);
 
   if (!loadedImage) {
     // 画像がアップロードされていない場合はアップロードUIのみ表示
@@ -441,7 +465,7 @@ export default function IconCropper() {
       </div>
 
       {/* 設定パネル */}
-      <div className="grid md:grid-cols-2 gap-6">
+      <div className="grid md:grid-cols-3 gap-6">
         {/* 背景設定 */}
         <div className="bg-white/90 rounded-2xl p-6 shadow-lg">
           <h3 className="text-lg font-bold text-header-bg mb-4">背景設定</h3>
@@ -472,6 +496,56 @@ export default function IconCropper() {
               />
               <span className="text-gray-700">透明背景を使用</span>
             </label>
+          </div>
+        </div>
+
+        {/* 縁取り設定 */}
+        <div className="bg-white/90 rounded-2xl p-6 shadow-lg">
+          <h3 className="text-lg font-bold text-header-bg mb-4">縁取り設定</h3>
+          <div className="space-y-4">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input 
+                type="checkbox" 
+                checked={borderEnabled} 
+                onChange={(e) => setBorderEnabled(e.target.checked)}
+                className="w-5 h-5 text-accent-bg rounded focus:ring-accent-bg"
+              />
+              <span className="text-gray-700">縁取りを有効にする</span>
+            </label>
+            
+            {borderEnabled && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    太さ: {borderWidth}px
+                  </label>
+                  <input
+                    type="range"
+                    min="1"
+                    max="20"
+                    value={borderWidth}
+                    onChange={(e) => setBorderWidth(Number(e.target.value))}
+                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                  />
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={borderColor}
+                    onChange={(e) => setBorderColor(e.target.value)}
+                    className="w-12 h-12 rounded-lg border-2 border-gray-200 cursor-pointer"
+                  />
+                  <input
+                    type="text"
+                    value={borderColor}
+                    onChange={(e) => setBorderColor(e.target.value)}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-bg"
+                    placeholder="#000000"
+                  />
+                </div>
+              </>
+            )}
           </div>
         </div>
 
