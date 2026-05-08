@@ -34,6 +34,7 @@ const SIZE_PRESETS = [
 export default function IconCropper() {
   const dropRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
   const [loadedImage, setLoadedImage] = useState<LoadedImage | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
 
@@ -177,6 +178,12 @@ export default function IconCropper() {
     ctx.closePath();
     ctx.clip();
 
+    // 透明背景時でも円内は背景色を保持し、円外のみ透過させる
+    if (transparent) {
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
     // 画像描画
     if (loadedImage) {
       ctx.imageSmoothingQuality = "high";
@@ -242,6 +249,7 @@ export default function IconCropper() {
   // ホイールでズーム（滑らかなズーム）
   const onWheel = useCallback((e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
+    e.stopPropagation();
     
     // より滑らかなズーム係数
     const zoomFactor = Math.exp(-e.deltaY * 0.0005);
@@ -265,6 +273,41 @@ export default function IconCropper() {
     setOffsetX(newOffsetX);
     setOffsetY(newOffsetY);
   }, [scale, offsetX, offsetY]);
+
+  // ホイール操作時にページスクロールを抑制（passive: false）
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const preventWheelScroll = (event: WheelEvent) => {
+      event.preventDefault();
+    };
+
+    canvas.addEventListener("wheel", preventWheelScroll, { passive: false });
+    return () => {
+      canvas.removeEventListener("wheel", preventWheelScroll);
+    };
+  }, []);
+
+  // 編集領域上のホイールは window 側で捕捉してスクロールを確実に抑制
+  useEffect(() => {
+    const preventEditorWheelScroll = (event: WheelEvent) => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const target = event.target as Node | null;
+      if (target && editor.contains(target)) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener("wheel", preventEditorWheelScroll, {
+      passive: false,
+      capture: true,
+    });
+    return () => {
+      window.removeEventListener("wheel", preventEditorWheelScroll, true);
+    };
+  }, []);
 
   // タッチジェスチャー対応
   const getTouchDistance = useCallback((touches: React.TouchList) => {
@@ -383,6 +426,12 @@ export default function IconCropper() {
     outCtx.closePath();
     outCtx.clip();
 
+    // 透明背景時でも円内は背景色を保持し、円外のみ透過させる
+    if (transparent) {
+      outCtx.fillStyle = bgColor;
+      outCtx.fillRect(0, 0, exportSize, exportSize);
+    }
+
     if (loadedImage) {
       // スケールとオフセットを出力解像度に合わせて換算
       outCtx.imageSmoothingQuality = "high";
@@ -457,13 +506,14 @@ export default function IconCropper() {
       <div className="bg-white/90 rounded-2xl p-6 shadow-lg">
         <h2 className="text-lg font-bold text-header-bg mb-4">編集</h2>
         <div className="flex justify-center mb-4">
-          <div className="relative">
+          <div ref={editorRef} className="relative overscroll-contain">
             <canvas
               ref={canvasRef}
               className="w-[min(100%,400px)] h-[min(100%,400px)] touch-none rounded-xl border-2 border-gray-200 bg-white shadow-inner"
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
+              onWheelCapture={onWheel}
               onWheel={onWheel}
               onTouchStart={onTouchStart}
               onTouchMove={onTouchMove}
@@ -487,8 +537,7 @@ export default function IconCropper() {
                 type="color"
                 value={bgColor}
                 onChange={(e) => setBgColor(e.target.value)}
-                className="w-12 h-12 rounded-lg border-2 border-gray-200 cursor-pointer"
-                disabled={transparent}
+                className="w-12 h-12 rounded-lg border-2 border-gray-200 cursor-pointer appearance-auto bg-transparent"
               />
               <input
                 type="text"
@@ -496,7 +545,6 @@ export default function IconCropper() {
                 onChange={(e) => setBgColor(e.target.value)}
                 className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-accent-bg"
                 placeholder="#ffffff"
-                disabled={transparent}
               />
             </div>
             <label className="flex items-center gap-3 cursor-pointer">
@@ -546,7 +594,7 @@ export default function IconCropper() {
                     type="color"
                     value={borderColor}
                     onChange={(e) => setBorderColor(e.target.value)}
-                    className="w-12 h-12 rounded-lg border-2 border-gray-200 cursor-pointer"
+                    className="w-12 h-12 rounded-lg border-2 border-gray-200 cursor-pointer appearance-auto bg-transparent"
                   />
                   <input
                     type="text"
